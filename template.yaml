@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  property-checker
+
+  Sample SAM Template for property-checker
+  
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+Resources:
+  PropertyCheckerFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      CodeUri: lambda/
+      Handler: app.handler
+      Runtime: nodejs12.x
+      Role: arn:aws:iam::110650347408:role/lambda_basic_execution
+
+  ConfigPermissionToCallLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !GetAtt PropertyCheckerFunction.Arn
+      Action: "lambda:InvokeFunction"
+      Principal: "config.amazonaws.com"
+
+  SSMParameterRule: 
+    Type: AWS::Config::ConfigRule
+    Properties: 
+      ConfigRuleName: SSMParameterRule
+      InputParameters:
+        ApiService: SSM
+        ApiAction: getParametersByPath
+        ApiParams: "{ Path: '/', Recursive: true}"
+        ResourceSelector: "$.Parameters"
+        ResourceIdPath: "$.Name"
+        ResourceValuePath: "$.Type"
+        ComparisonOperator: EQUALS
+        ComparisonValue: SecureString
+        ResourceType: AWS::SSM::Parameter
+      MaximumExecutionFrequency: One_Hour
+      Source: 
+        Owner: "CUSTOM_LAMBDA"
+        SourceDetails:
+          - EventSource: "aws.config"
+            MessageType: ScheduledNotification
+        SourceIdentifier: !GetAtt PropertyCheckerFunction.Arn
+    DependsOn: ConfigPermissionToCallLambda
+
+  SQSParameterRule: 
+    Type: AWS::Config::ConfigRule
+    Properties: 
+      ConfigRuleName: SQSParameterRule
+      InputParameters:
+        ApiService: SQS
+        ApiAction: listQueues
+        ApiParams: "{}"
+        ResourceSelector: "$.QueueUrls"
+        ResourceIdPath: "$."
+        ComparisonOperator: IS_EMPTY
+        ComparisonValue: false
+        ResourceType: AWS::SQS::Queue
+        ResourceValuePath.1.ApiService: SQS
+        ResourceValuePath.1.ApiAction: getQueueAttributes
+        ResourceValuePath.1.ApiParams: "{QueueUrl: stack[0], AttributeNames: [ 'All' ]}"
+        ResourceValuePath.1.OutputPath: "$.Attributes.KmsMasterKeyId"
+      MaximumExecutionFrequency: One_Hour
+      Source: 
+        Owner: "CUSTOM_LAMBDA"
+        SourceDetails:
+          - EventSource: "aws.config"
+            MessageType: ScheduledNotification
+        SourceIdentifier: !GetAtt PropertyCheckerFunction.Arn
+    DependsOn: ConfigPermissionToCallLambda
